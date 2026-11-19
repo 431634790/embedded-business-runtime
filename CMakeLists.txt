@@ -12,16 +12,37 @@ if(NOT CMAKE_USE_PTHREADS_INIT)
     message(FATAL_ERROR "A POSIX pthread environment is required (e.g. Linux or WSL).")
 endif()
 
-# Stage 1 bootstrap. Add core/platform/simulator sources as implemented.
-add_executable(embedded-business-runtime simulator/main.c)
-target_include_directories(embedded-business-runtime PRIVATE
+add_library(embedded_business_runtime STATIC src/core/module_mgr.c)
+target_include_directories(embedded_business_runtime PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
 )
-target_compile_definitions(embedded-business-runtime PRIVATE
+target_compile_definitions(embedded_business_runtime PUBLIC
     _POSIX_C_SOURCE=200809L
 )
-target_link_libraries(embedded-business-runtime PRIVATE Threads::Threads)
+target_link_libraries(embedded_business_runtime PUBLIC Threads::Threads)
+
+# main.c supplies a temporary event_loop_run until the queue loop is implemented.
+add_executable(embedded-business-runtime simulator/main.c)
+target_include_directories(embedded-business-runtime PRIVATE src/core)
+target_link_libraries(embedded-business-runtime PRIVATE embedded_business_runtime)
 
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(embedded_business_runtime PRIVATE -Wall -Wextra -Wpedantic)
     target_compile_options(embedded-business-runtime PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(test_module_mgr tests/test_module_mgr.c)
+    target_include_directories(test_module_mgr PRIVATE src/core)
+    target_link_libraries(test_module_mgr PRIVATE embedded_business_runtime)
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(test_module_mgr PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    # Separate processes give each case its own single startup attempt.
+    foreach(case_name IN ITEMS order init_failure ready_failure empty invalid
+                               capacity reentrant concurrent snapshot)
+        add_test(NAME module_mgr_${case_name} COMMAND test_module_mgr ${case_name})
+        set_tests_properties(module_mgr_${case_name} PROPERTIES TIMEOUT 10)
+    endforeach()
 endif()
